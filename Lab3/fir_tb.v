@@ -95,11 +95,11 @@ module fir_tb
         .tap_Do(tap_Do),
 
         // ram for data
-        .tap_WE(data_WE),
-        .tap_EN(data_EN),
-        .tap_Di(data_Di),
-        .tap_A(data_A),
-        .tap_Do(data_Do),
+        .data_WE(data_WE),
+        .data_EN(data_EN),
+        .data_Di(data_Di),
+        .data_A(data_A),
+        .data_Do(data_Do),
 
         .axis_clk(axis_clk),
         .axis_rst_n(axis_rst_n)
@@ -128,13 +128,15 @@ module fir_tb
 
     reg signed [(pDATA_WIDTH-1):0] Din_list[0:(Data_Num-1)];
     reg signed [(pDATA_WIDTH-1):0] golden_list[0:(Data_Num-1)];
+    reg error_coef;
 
+    // dump waveform
     initial begin
         $dumpfile("fir.vcd");
         $dumpvars();
     end
 
-
+    // clock generator
     initial begin
         axis_clk = 0;
         forever begin
@@ -142,12 +144,14 @@ module fir_tb
         end
     end
 
+    // reset generator
     initial begin
         axis_rst_n = 0;
         @(posedge axis_clk); @(posedge axis_clk);
         axis_rst_n = 1;
     end
 
+    // read input & golden data
     reg [31:0]  data_length;
     integer Din, golden, input_data, golden_data, m;
     initial begin
@@ -161,10 +165,12 @@ module fir_tb
         end
     end
 
+    // input data stream
     integer i;
     initial begin
         $display("------------Start simulation-----------");
         ss_tvalid = 0;
+        @(posedge axis_clk)
         $display("----Start the data input(AXI-Stream)----");
         for(i=0;i<(data_length-1);i=i+1) begin
             ss_tlast = 0; ss(Din_list[i]);
@@ -174,6 +180,7 @@ module fir_tb
         $display("------End the data input(AXI-Stream)------");
     end
 
+    // Compare output data stream with golden data
     integer k;
     reg error;
     reg status_error;
@@ -198,16 +205,20 @@ module fir_tb
 
     // Prevent hang
     integer timeout = (1000000);
+    integer x;
     initial begin
         while(timeout > 0) begin
             @(posedge axis_clk);
             timeout = timeout - 1;
         end
         $display($time, "Simualtion Hang ....");
+        // for (x = 0; x < 11; x=x+1) begin
+        //     $display("Coef[%d] = %d", x, tap_RAM.RAM[x]);
+        // end
         $finish;
     end
 
-
+    // coefficient table
     reg signed [31:0] coef[0:10]; // fill in coef 
     initial begin
         coef[0]  =  32'd0;
@@ -223,27 +234,32 @@ module fir_tb
         coef[10] =  32'd0;
     end
 
-    reg error_coef;
+    // Setup phase to program coefficient
     initial begin
         error_coef = 0;
         $display("----Start the coefficient input(AXI-lite)----");
         config_write(12'h10, data_length);
         for(k=0; k< Tape_Num; k=k+1) begin
-            config_write(12'h20+k, coef[k]);
+            config_write(12'h20+4*k, coef[k]);
         end
+        // for (x = 0; x < 11; x=x+1) begin
+        //     $display("Coef[%d] = %d", x, tap_RAM.RAM[x]);
+        // end
         awvalid <= 0; wvalid <= 0;
         // read-back and check
         $display(" Check Coefficient ...");
         for(k=0; k < Tape_Num; k=k+1) begin
-            config_read_check(12'h20+k, coef[k], 32'hffffffff);
+            config_read_check(12'h20+4*k, coef[k], 32'hffffffff);
         end
         arvalid <= 0;
         $display(" Tape programming done ...");
         $display(" Start FIR");
         @(posedge axis_clk) config_write(12'h00, 32'h0000_0001);    // ap_start = 1
+        awvalid <= 0; wvalid <= 0;
         $display("----End the coefficient input(AXI-lite)----");
     end
 
+    // AXI4-write
     task config_write;
         input [11:0]    addr;
         input [31:0]    data;
@@ -257,6 +273,7 @@ module fir_tb
         end
     endtask
 
+    // AXI4-read
     task config_read_check;
         input [11:0]        addr;
         input signed [31:0] exp_data;
@@ -278,7 +295,7 @@ module fir_tb
     endtask
 
 
-
+    // AXI4-stream write
     task ss;
         input  signed [31:0] in1;
         begin
@@ -291,13 +308,14 @@ module fir_tb
         end
     endtask
 
+    // AXI4-stream read
     task sm;
         input  signed [31:0] in2; // golden data
         input         [31:0] pcnt; // pattern count
         begin
             sm_tready <= 1;
             @(posedge axis_clk) 
-            wait(sm_tvalid);
+            //wait(sm_tvalid);
             while(!sm_tvalid) @(posedge axis_clk);
             if (sm_tdata != in2) begin
                 $display("[ERROR] [Pattern %d] Golden answer: %d, Your answer: %d", pcnt, in2, sm_tdata);
