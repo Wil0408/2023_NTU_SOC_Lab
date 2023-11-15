@@ -11,7 +11,7 @@ In /testbench/counter_la_fir/
 ./run_sim
 ```
 
-## Check Waveform
+## Check Waveform:
 In /testbench/counter_la_fir/
 open counter_la_fir.vcd
 
